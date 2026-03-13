@@ -1,0 +1,1022 @@
+---
+title: "Yuxuan Gou-final project"
+author: "Yuxuan (Rebecca)"
+date: "2026-03-11"
+output: html_document
+format:
+  html:
+    embed-resources: true
+---
+
+Descriptive anaysis and EDA
+```{r}
+
+#write.xlsx(data1, "data1.xlsx")
+library(readxl)
+data1<-read_excel("data1.xlsx")
+
+data1
+library(dplyr)
+library(corrplot)
+
+corr_data <- data1 |>
+  select(
+    pss4_total, age, education, income_ord, bmi, EQ_VAS,
+    sleep_quality, MEQtotal_new, phq9_total, gad7_total,
+    social_support_total, self_efficacy_total,
+    resilience_total, family_support_total, ACE_total
+  )
+
+corr_mat <- cor(corr_data, use = "pairwise.complete.obs")
+
+corrplot(
+  corr_mat,
+  method = "color",
+  type = "upper",
+  tl.col = "black",
+  tl.cex = 0.8
+)
+
+dir.create("figs", showWarnings = FALSE)
+
+png("figs/correlation_matrix.png", width = 1600, height = 1400, res = 200)
+
+corrplot(
+  corr_mat,
+  method = "color",
+  type = "upper",
+  tl.col = "black",
+  tl.cex = 0.8
+)
+
+dev.off()
+
+
+library(dplyr)
+library(tidyr)
+library(openxlsx)
+
+# Create a folder to save the output
+dir.create("output", showWarnings = FALSE)
+
+# -----------------------------
+# Table 2A: continuous variables
+# -----------------------------
+# These are the continuous variables we want to summarize
+continuous_vars <- c(
+  "pss4_total", "age", "education", "income_ord", "bmi", "EQ_VAS",
+  "sleep_quality", "MEQtotal_new", "phq9_total", "gad7_total",
+  "social_support_total", "self_efficacy_total",
+  "resilience_total", "family_support_total", "ACE_total"
+)
+
+# Calculate mean, SD, min, max, and correlation with perceived stress
+table2a <- data1 |>
+  select(all_of(continuous_vars)) |>
+  summarise(
+    across(
+      everything(),
+      list(
+        Mean = ~mean(.x, na.rm = TRUE),
+        SD   = ~sd(.x, na.rm = TRUE),
+        Min  = ~min(.x, na.rm = TRUE),
+        Max  = ~max(.x, na.rm = TRUE)
+      )
+    )
+  ) |>
+  pivot_longer(
+    cols = everything(),
+    names_to = c("Variable", ".value"),
+    names_sep = "_(?=[^_]+$)"
+  ) |>
+  mutate(
+    `Correlation with perceived stress` = sapply(Variable, function(v) {
+      if (v == "pss4_total") {
+        NA
+      } else {
+        cor(data1[[v]], data1$pss4_total, use = "pairwise.complete.obs")
+      }
+    })
+  )
+
+# Replace code-style names with cleaner labels
+table2a$Variable <- dplyr::recode(
+  table2a$Variable,
+  pss4_total = "Perceived stress",
+  age = "Age",
+  education = "Education",
+  income_ord = "Income",
+  bmi = "BMI",
+  EQ_VAS = "Self-rated health",
+  sleep_quality = "Sleep quality",
+  MEQtotal_new = "Chronotype",
+  phq9_total = "Depressive symptoms",
+  gad7_total = "Anxiety symptoms",
+  social_support_total = "Social support",
+  self_efficacy_total = "Self-efficacy",
+  resilience_total = "Resilience",
+  family_support_total = "Family support",
+  ACE_total = "Adverse childhood experiences"
+)
+
+# Round the numbers to make the table cleaner
+table2a <- table2a |>
+  mutate(
+    Mean = round(Mean, 2),
+    SD = round(SD, 2),
+    Min = round(Min, 2),
+    Max = round(Max, 2),
+    `Correlation with perceived stress` = round(`Correlation with perceived stress`, 2)
+  )
+
+# -----------------------------
+# Table 2B: categorical variables
+# -----------------------------
+# These are the categorical variables we want to summarize
+categorical_vars <- c(
+  "gender", "hukou", "marital", "employment", "live_alone",
+  "any_life_event", "debt_any", "drinking", "smoking", "chronic_disease"
+)
+
+# Count frequencies and percentages for each category
+table2b <- bind_rows(
+  lapply(categorical_vars, function(v) {
+    data1 |>
+      count(.data[[v]]) |>
+      mutate(
+        Variable = v,
+        Percent = round(100 * n / sum(n), 2)
+      ) |>
+      rename(Category = 1, N = n) |>
+      select(Variable, Category, N, Percent)
+  })
+)
+
+# Replace code-style names with cleaner labels
+table2b$Variable <- dplyr::recode(
+  table2b$Variable,
+  gender = "Gender",
+  hukou = "Hukou status",
+  marital = "Marital status",
+  employment = "Employment status",
+  live_alone = "Lives alone",
+  any_life_event = "Major life event",
+  debt_any = "Debt",
+  drinking = "Drinking",
+  smoking = "Smoking",
+  chronic_disease = "Chronic disease"
+)
+
+# -----------------------------
+# Save both tables into one Excel file
+# -----------------------------
+wb <- createWorkbook()
+
+addWorksheet(wb, "Continuous variables")
+writeData(wb, "Continuous variables", table2a)
+
+addWorksheet(wb, "Categorical variables")
+writeData(wb, "Categorical variables", table2b)
+
+saveWorkbook(wb, "output/descriptive_tables.xlsx", overwrite = TRUE)
+
+# Preview the tables in R
+table2a
+table2b
+```
+
+
+
+
+
+```{r}
+### PSS 
+# =========================================================
+# Check whether pss4_total is reasonable for OLS
+# This code examines:
+# 1. the distribution of the outcome variable,
+# 2. skewness and kurtosis,
+# 3. residual normality,
+# 4. heteroskedasticity,
+# 5. multicollinearity,
+# 6. influential observations.
+# =========================================================
+
+library(dplyr)
+library(ggplot2)
+library(e1071)
+library(lmtest)
+library(sandwich)
+library(car)
+
+# ---------------------------------------------------------
+# Step 1. Create analysis sample
+# Use the same variables as the OLS model
+# ---------------------------------------------------------
+model_data <- data1 |>
+  select(
+    pss4_total,
+    age, gender, education, income_ord, hukou, marital, employment,
+    bmi, EQ_VAS, sleep_quality, MEQtotal_new,
+    phq9_total, gad7_total, social_support_total, self_efficacy_total,
+    resilience_total, family_support_total,
+    live_alone, any_life_event, debt_any, ACE_total,
+    drinking, smoking, chronic_disease
+  ) |>
+  mutate(
+    EQ_VAS = as.numeric(EQ_VAS)
+  ) |>
+  filter(if_all(everything(), ~ !is.na(.)))
+
+# Make categorical variables factors
+model_data$gender <- as.factor(model_data$gender)
+model_data$hukou <- as.factor(model_data$hukou)
+model_data$marital <- as.factor(model_data$marital)
+model_data$employment <- as.factor(model_data$employment)
+model_data$live_alone <- as.factor(model_data$live_alone)
+model_data$any_life_event <- as.factor(model_data$any_life_event)
+model_data$debt_any <- as.factor(model_data$debt_any)
+model_data$drinking <- as.factor(model_data$drinking)
+model_data$smoking <- as.factor(model_data$smoking)
+model_data$chronic_disease <- as.factor(model_data$chronic_disease)
+
+# ---------------------------------------------------------
+# Step 2. Look at the distribution of PSS
+# ---------------------------------------------------------
+summary(model_data$pss4_total)
+table(model_data$pss4_total)
+length(unique(model_data$pss4_total))
+
+# Histogram
+ggplot(model_data, aes(x = pss4_total)) +
+  geom_histogram(binwidth = 1) +
+  labs(
+    title = "Distribution of Perceived Stress",
+    x = "PSS-4 total score",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+# Boxplot
+ggplot(model_data, aes(y = pss4_total)) +
+  geom_boxplot() +
+  labs(
+    title = "Boxplot of Perceived Stress",
+    y = "PSS-4 total score"
+  ) +
+  theme_minimal()
+
+# ---------------------------------------------------------
+# Step 3. Check skewness and kurtosis of the outcome
+# Note:
+# OLS does not require Y itself to be normal,
+# but this is useful for understanding the shape of the outcome.
+# ---------------------------------------------------------
+skewness(model_data$pss4_total, na.rm = TRUE, type = 2)
+kurtosis(model_data$pss4_total, na.rm = TRUE, type = 2)
+
+# ---------------------------------------------------------
+# Step 4. Fit the OLS model
+# ---------------------------------------------------------
+m_ols <- lm(
+  pss4_total ~ age + gender + education + income_ord + hukou + marital + employment +
+    bmi + EQ_VAS + sleep_quality + MEQtotal_new +
+    phq9_total + gad7_total + social_support_total + self_efficacy_total +
+    resilience_total + family_support_total +
+    live_alone + any_life_event + debt_any + ACE_total + drinking + smoking + chronic_disease,
+  data = model_data
+)
+
+summary(m_ols)
+
+# ---------------------------------------------------------
+# Step 5. Standard diagnostic plots
+# These are the main plots for checking OLS assumptions
+# ---------------------------------------------------------
+par(mfrow = c(2, 2))
+plot(m_ols)
+par(mfrow = c(1, 1))
+
+# ---------------------------------------------------------
+# Step 6. Check residual normality more directly
+# OLS mainly cares about residual behavior, not Y itself
+# ---------------------------------------------------------
+resid_ols <- residuals(m_ols)
+
+# Histogram of residuals
+ggplot(data.frame(resid_ols), aes(x = resid_ols)) +
+  geom_histogram(bins = 30) +
+  labs(
+    title = "Distribution of OLS Residuals",
+    x = "Residual",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+# QQ plot
+qqnorm(resid_ols)
+qqline(resid_ols, col = "red")
+
+# Optional: skewness and kurtosis of residuals
+skewness(resid_ols, na.rm = TRUE, type = 2)
+kurtosis(resid_ols, na.rm = TRUE, type = 2)
+
+# Optional: Shapiro test
+# Not recommended for very large samples because it almost always becomes significant
+# shapiro.test(sample(resid_ols, 5000))
+
+# ---------------------------------------------------------
+# Step 7. Check heteroskedasticity
+# Breusch-Pagan test
+# If significant, robust standard errors are recommended
+# ---------------------------------------------------------
+bptest(m_ols)
+
+# Robust standard errors
+coeftest(m_ols, vcov = vcovHC(m_ols, type = "HC3"))
+
+# ---------------------------------------------------------
+# Step 8. Check multicollinearity
+# ---------------------------------------------------------
+vif(m_ols)
+
+# ---------------------------------------------------------
+# Step 9. Check influential observations
+# ---------------------------------------------------------
+cooks_d <- cooks.distance(m_ols)
+summary(cooks_d)
+
+# Common rough rule: observations with Cook's D > 4/n
+influential_cases <- which(cooks_d > 4 / nrow(model_data))
+length(influential_cases)
+head(influential_cases)
+
+# Influence plots
+plot(m_ols, which = 4)  # Cook's distance
+plot(m_ols, which = 5)  # Residuals vs leverage
+```
+Descriptively, pss4_total exhibits a clearly non-normal distribution. Scores range from 0 to 16, and both the mean and median are around 4. Lower values are heavily concentrated, especially at 0, indicating a possible floor effect. This suggests that perceived stress is generally low in the sample, although meaningful variation still exists across respondents. Although the distribution is not symmetric, the variable still has a reasonably wide range of ordered values and is observed in a large sample, making it acceptable to use as a scale-based continuous outcome in subsequent analysis, with appropriate caution in interpretation.
+
+
+
+```{r}
+m_ols <- lm(
+    pss4_total ~ age + gender + education + income_ord + hukou + marital + employment +
+    bmi + as.numeric(EQ_VAS) + sleep_quality + MEQtotal_new +
+    phq9_total + gad7_total + social_support_total + self_efficacy_total +
+    resilience_total + family_support_total +
+    live_alone + any_life_event + debt_any + ACE_total + drinking + smoking + chronic_disease,
+  data = data1
+)
+summary(m_ols)
+library(lmtest)
+library(sandwich)
+
+# Breusch-Pagan test for heteroskedasticity
+bptest(m_ols)
+
+# OLS coefficients with HC3 robust standard errors
+coeftest(m_ols, vcov = vcovHC(m_ols, type = "HC3"))
+```
+
+Lasso:
+```{r}
+# =========================================================
+# LASSO for predicting pss4_total
+# Purpose:
+# 1. Use the same set of predictors as in the OLS model.
+# 2. Apply LASSO with cross-validation to shrink less useful
+#    coefficients toward zero.
+# 3. Identify which predictors remain important after penalty.
+# =========================================================
+
+library(dplyr)
+library(glmnet)
+
+# ---------------------------------------------------------
+# Step 1. Create analysis data with the same variables used in OLS
+# This ensures that LASSO is fit on the same specification.
+# ---------------------------------------------------------
+lasso_data <- data1 |>
+  select(
+    pss4_total,
+    age, gender, education, income_ord, hukou, marital, employment,
+    bmi, EQ_VAS, sleep_quality, MEQtotal_new,
+    phq9_total, gad7_total, social_support_total, self_efficacy_total,
+    resilience_total, family_support_total,
+    live_alone, any_life_event, debt_any, ACE_total,
+    drinking, smoking, chronic_disease
+  ) |>
+  filter(if_all(everything(), ~ !is.na(.)))
+
+# Make categorical predictors factors
+lasso_data$gender <- as.factor(lasso_data$gender)
+lasso_data$hukou <- as.factor(lasso_data$hukou)
+lasso_data$marital <- as.factor(lasso_data$marital)
+lasso_data$employment <- as.factor(lasso_data$employment)
+lasso_data$live_alone <- as.factor(lasso_data$live_alone)
+lasso_data$any_life_event <- as.factor(lasso_data$any_life_event)
+lasso_data$debt_any <- as.factor(lasso_data$debt_any)
+lasso_data$drinking <- as.factor(lasso_data$drinking)
+lasso_data$smoking <- as.factor(lasso_data$smoking)
+lasso_data$chronic_disease <- as.factor(lasso_data$chronic_disease)
+
+# ---------------------------------------------------------
+# Step 2. Create design matrix
+# model.matrix() converts factors into dummy variables, which
+# glmnet needs. The intercept column is removed because glmnet
+# handles the intercept internally.
+# ---------------------------------------------------------
+x <- model.matrix(
+  pss4_total ~ age + gender + education + income_ord + hukou + marital + employment +
+    bmi + as.numeric(EQ_VAS) + sleep_quality + MEQtotal_new +
+    phq9_total + gad7_total + social_support_total + self_efficacy_total +
+    resilience_total + family_support_total +
+    live_alone + any_life_event + debt_any + ACE_total + drinking + smoking + chronic_disease,
+  data = lasso_data
+)[, -1]
+
+y <- lasso_data$pss4_total
+
+# ---------------------------------------------------------
+# Step 3. Run cross-validated LASSO
+# alpha = 1 means LASSO penalty.
+# nfolds = 10 gives 10-fold cross-validation.
+# standardize = TRUE is recommended because predictors are on
+# different scales.
+# ---------------------------------------------------------
+set.seed(123)
+
+cv_lasso <- cv.glmnet(
+  x = x,
+  y = y,
+  alpha = 1,
+  nfolds = 10,
+  standardize = TRUE
+)
+
+# View the optimal penalty values
+cv_lasso$lambda.min   # lambda giving minimum CV error
+cv_lasso$lambda.1se   # more conservative lambda
+
+# Plot CV curve
+plot(cv_lasso)
+
+# ---------------------------------------------------------
+# Step 4. Extract coefficients
+# lambda.min keeps more variables;
+# lambda.1se is more parsimonious.
+# ---------------------------------------------------------
+coef_min <- coef(cv_lasso, s = "lambda.min")
+coef_1se <- coef(cv_lasso, s = "lambda.1se")
+
+coef_min
+coef_1se
+
+# ---------------------------------------------------------
+# Step 5. Show only non-zero coefficients
+# These are the predictors selected by LASSO.
+# ---------------------------------------------------------
+selected_min <- coef_min[coef_min[, 1] != 0, , drop = FALSE]
+selected_1se <- coef_1se[coef_1se[, 1] != 0, , drop = FALSE]
+
+selected_min
+selected_1se
+
+# Convert to cleaner data frames for viewing
+selected_min_df <- data.frame(
+  variable = rownames(selected_min),
+  coefficient = as.numeric(selected_min[, 1])
+)
+
+selected_1se_df <- data.frame(
+  variable = rownames(selected_1se),
+  coefficient = as.numeric(selected_1se[, 1])
+)
+
+selected_min_df
+selected_1se_df
+
+
+
+
+# Create a coefficient plot for LASSO results at lambda.1se
+# This plot shows the direction and relative magnitude of
+# the predictors retained in the more parsimonious LASSO model.
+
+library(dplyr)
+library(ggplot2)
+
+lasso_plot_df <- selected_1se_df |>
+  filter(variable != "(Intercept)") |>
+  arrange(coefficient) |>
+  mutate(variable = factor(variable, levels = variable))
+
+ggplot(lasso_plot_df, aes(x = variable, y = coefficient)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "LASSO Coefficients at lambda.1se",
+    x = "Predictor",
+    y = "Coefficient"
+  ) +
+  theme_minimal()
+```
+Using the more parsimonious lambda.1se solution, LASSO retained a smaller set of predictors that contributed most strongly to perceived stress. Specifically, the variables selected by the model were income, student employment status, self-rated health, chronotype, depressive symptoms, anxiety symptoms, self-efficacy, family support, major life events, and adverse childhood experiences. Among these predictors, GAD-7 and PHQ-9 showed the strongest positive associations with perceived stress, indicating that individuals with higher levels of anxiety and depressive symptoms also tended to report substantially higher stress. In contrast, self-efficacy, family support, better self-rated health, and greater morningness tendency were associated with lower perceived stress. In addition, having experienced major life events or having more adverse childhood experiences was associated with higher stress. Overall, the LASSO results suggest that perceived stress is shaped more strongly by psychological distress, psychosocial resources, and stressful life experiences than by basic demographic characteristics alone.
+
+
+
+
+
+```{r}
+
+
+library(ggplot2)
+library(dplyr)
+
+# descriptives
+eda_table <- data.frame(
+  Variable = c("self_efficacy_total", "ACE_total", "年龄"),
+  N = c(
+    sum(!is.na(data1$self_efficacy_total)),
+    sum(!is.na(data1$ACE_total)),
+    sum(!is.na(data1$`年龄`))
+  ),
+  Mean = c(
+    mean(data1$self_efficacy_total, na.rm = TRUE),
+    mean(data1$ACE_total, na.rm = TRUE),
+    mean(data1$`年龄`, na.rm = TRUE)
+  ),
+  SD = c(
+    sd(data1$self_efficacy_total, na.rm = TRUE),
+    sd(data1$ACE_total, na.rm = TRUE),
+    sd(data1$`年龄`, na.rm = TRUE)
+  ),
+  Min = c(
+    min(data1$self_efficacy_total, na.rm = TRUE),
+    min(data1$ACE_total, na.rm = TRUE),
+    min(data1$`年龄`, na.rm = TRUE)
+  ),
+  Median = c(
+    median(data1$self_efficacy_total, na.rm = TRUE),
+    median(data1$ACE_total, na.rm = TRUE),
+    median(data1$`年龄`, na.rm = TRUE)
+  ),
+  Max = c(
+    max(data1$self_efficacy_total, na.rm = TRUE),
+    max(data1$ACE_total, na.rm = TRUE),
+    max(data1$`年龄`, na.rm = TRUE)
+  )
+)
+
+eda_table
+
+# 1. self_efficacy distribution
+ggplot(data1, aes(x = self_efficacy_total)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "skyblue", alpha = 0.7) +
+  geom_density(linewidth = 1) +
+  geom_vline(aes(xintercept = mean(self_efficacy_total, na.rm = TRUE)),
+             linetype = "dashed", linewidth = 1) +
+  labs(
+    title = "Distribution of Self-Efficacy",
+    x = "Self-Efficacy Total",
+    y = "Density"
+  ) +
+  theme_minimal()
+
+# 2. ACE distribution
+ggplot(data1, aes(x = ACE_total)) +
+  geom_histogram(binwidth = 1, boundary = 0, fill = "orange", alpha = 0.7) +
+  geom_vline(aes(xintercept = mean(ACE_total, na.rm = TRUE)),
+             linetype = "dashed", linewidth = 1) +
+  labs(
+    title = "Distribution of ACE Total",
+    x = "ACE Total",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+# 3. age distribution
+ggplot(data1, aes(x = `age`)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "seagreen3", alpha = 0.7) +
+  geom_density(linewidth = 1) +
+  labs(
+    title = "Distribution of Age",
+    x = "Age",
+    y = "Density"
+  ) +
+  theme_minimal()
+
+# 4. ACE vs self-efficacy
+ggplot(data1, aes(x = ACE_total, y = self_efficacy_total)) +
+  geom_jitter(alpha = 0.25, width = 0.15, height = 0.15) +
+  geom_smooth(method = "lm", se = TRUE, linewidth = 1) +
+  labs(
+    title = "ACE Total and Self-Efficacy",
+    x = "ACE Total",
+    y = "Self-Efficacy Total"
+  ) +
+  theme_minimal()
+
+# 5. age vs self-efficacy
+ggplot(data1, aes(x = `年龄`, y = self_efficacy_total)) +
+  geom_point(alpha = 0.25) +
+  geom_smooth(se = TRUE, linewidth = 1) +
+  labs(
+    title = "Age and Self-Efficacy",
+    x = "Age",
+    y = "Self-Efficacy Total"
+  ) +
+  theme_minimal()
+
+# 6. self-efficacy by gender
+ggplot(data1, aes(x = as.factor(gender), y = self_efficacy_total, fill = as.factor(gender))) +
+  geom_violin(alpha = 0.5, trim = FALSE) +
+  geom_boxplot(width = 0.15, outlier.alpha = 0.25) +
+  labs(
+    title = "Self-Efficacy by Gender",
+    x = "Gender",
+    y = "Self-Efficacy Total"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# 7. self-efficacy by education
+ggplot(data1, aes(x = as.factor(education), y = self_efficacy_total, fill = as.factor(education))) +
+  geom_violin(alpha = 0.5, trim = FALSE) +
+  geom_boxplot(width = 0.12, outlier.alpha = 0.2) +
+  labs(
+    title = "Self-Efficacy by Education",
+    x = "Education",
+    y = "Self-Efficacy Total"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+# 8. mean self-efficacy by ACE score
+ace_summary <- data1 |>
+  filter(!is.na(ACE_total), !is.na(self_efficacy_total)) |>
+  group_by(ACE_total) |>
+  summarise(
+    mean_self_efficacy = mean(self_efficacy_total),
+    n = n(),
+    .groups = "drop"
+  )
+
+ggplot(ace_summary, aes(x = ACE_total, y = mean_self_efficacy)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  labs(
+    title = "Mean Self-Efficacy by ACE Score",
+    x = "ACE Total",
+    y = "Mean Self-Efficacy"
+  ) +
+  theme_minimal()
+
+# 9. correlation heatmap
+cor_data <- data1 |>
+  select(self_efficacy_total, ACE_total, `年龄`) |>
+  na.omit()
+
+cor_mat <- cor(cor_data)
+
+cor_df <- as.data.frame(as.table(cor_mat))
+names(cor_df) <- c("Var1", "Var2", "Correlation")
+
+ggplot(cor_df, aes(x = Var1, y = Var2, fill = Correlation)) +
+  geom_tile() +
+  geom_text(aes(label = round(Correlation, 2)), size = 4) +
+  labs(
+    title = "Correlation Heatmap"
+  ) +
+  theme_minimal()
+
+model <- lm(self_efficacy_total ~ ACE_total + age + gender + education + income_ord + hukou + marital, data = model_data)
+
+qqnorm(resid(model))
+qqline(resid(model), col = "red")
+
+hist(resid(model), breaks = 30)
+
+
+
+
+```
+
+
+
+
+
+
+Random Forest Model
+```{r}
+# =========================================================
+# Tune Random Forest hyperparameters for full model
+# Purpose:
+# 1. Split data into training and test sets.
+# 2. Use cross-validation on the training set.
+# 3. Tune mtry and min_n for random forest regression.
+# 4. Select the best hyperparameters based on RMSE.
+# =========================================================
+
+library(tidymodels)
+library(dplyr)
+
+set.seed(123)
+
+rf_data <- data1 |>
+  select(
+    pss4_total,
+    age, gender, education, income_ord, hukou, marital, employment,
+    bmi, EQ_VAS, sleep_quality, MEQtotal_new,
+    phq9_total, gad7_total, social_support_total, self_efficacy_total,
+    resilience_total, family_support_total,
+    live_alone, any_life_event, debt_any, ACE_total,
+    drinking, smoking, chronic_disease
+  ) |>
+  filter(if_all(everything(), ~ !is.na(.)))
+
+split <- initial_split(rf_data, prop = 0.8)
+train_data <- training(split)
+test_data  <- testing(split)
+
+folds <- vfold_cv(train_data, v = 5)
+
+rf_recipe <- recipe(pss4_total ~ ., data = train_data) |>
+  step_dummy(all_nominal_predictors())
+
+rf_spec <- rand_forest(
+  mtry = tune(),
+  min_n = tune(),
+  trees = 500
+) |>
+  set_engine("ranger") |>
+  set_mode("regression")
+
+rf_workflow <- workflow() |>
+  add_recipe(rf_recipe) |>
+  add_model(rf_spec)
+
+rf_grid <- grid_regular(
+  mtry(range = c(3, 15)),
+  min_n(range = c(5, 30)),
+  levels = 5
+)
+
+rf_tuned <- tune_grid(
+  rf_workflow,
+  resamples = folds,
+  grid = rf_grid,
+  metrics = metric_set(rmse, rsq)
+)
+
+collect_metrics(rf_tuned)
+
+best_rf <- select_best(rf_tuned, metric = "rmse")
+best_rf
+
+
+
+final_rf_workflow <- finalize_workflow(rf_workflow, best_rf)
+
+final_rf_fit <- fit(final_rf_workflow, data = train_data)
+
+rf_test_pred <- predict(final_rf_fit, new_data = test_data) |>
+  bind_cols(test_data |> select(pss4_total))
+
+metrics(rf_test_pred, truth = pss4_total, estimate = .pred)
+```
+
+
+SHAP for full-RF
+```{r}
+library(fastshap)
+library(ggplot2)
+library(tidyr)
+
+# =========================================================
+# Step 1. Sample observations from the training set for SHAP
+# Purpose:
+# Computing SHAP for all observations can be slow.
+# A random subsample is usually enough for interpretation.
+# =========================================================
+
+set.seed(123)
+
+shap_data <- train_data |>
+  slice_sample(n = 1000)
+
+X_shap <- shap_data |>
+  select(-pss4_total)
+
+# =========================================================
+# Step 2. Define a prediction wrapper
+# Purpose:
+# Tell fastshap how to generate predictions from the fitted
+# workflow object.
+# =========================================================
+
+pred_wrapper <- function(object, newdata) {
+  predict(object, new_data = newdata)$.pred
+}
+
+
+# =========================================================
+# Step 3. Compute SHAP values
+# Purpose:
+# Estimate approximate SHAP values for each predictor in the
+# sampled observations.
+# =========================================================
+
+set.seed(123)
+
+shap_values <- fastshap::explain(
+  object = final_rf_fit,
+  X = X_shap,
+  pred_wrapper = pred_wrapper,
+  nsim = 50,
+  adjust = TRUE
+)
+
+head(shap_values)
+dim(shap_values)
+
+
+# =========================================================
+# Step 4. Global SHAP importance plot
+# Purpose:
+# Rank predictors by their average absolute SHAP values.
+# Larger values indicate greater overall importance.
+# =========================================================
+
+shap_importance <- data.frame(
+  variable = colnames(shap_values),
+  mean_abs_shap = apply(abs(shap_values), 2, mean)
+) |>
+  arrange(desc(mean_abs_shap))
+
+ggplot(
+  shap_importance |> slice_max(order_by = mean_abs_shap, n = 15),
+  aes(x = reorder(variable, mean_abs_shap), y = mean_abs_shap)
+) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Top 15 Predictors by Mean Absolute SHAP Value",
+    x = "Predictor",
+    y = "Mean |SHAP value|"
+  ) +
+  theme_minimal()
+
+
+shap_importance |>
+  slice_max(order_by = mean_abs_shap, n = 10)
+```
+
+
+Lasso-RF
+```{r}
+# =========================================================
+# Random Forest using LASSO-selected predictors
+# Purpose:
+# 1. Use only the predictors retained by LASSO at lambda.1se.
+# 2. Split the data into training and test sets.
+# 3. Tune random forest hyperparameters using 5-fold CV.
+# 4. Fit the final model and evaluate predictive performance.
+# =========================================================
+
+library(tidymodels)
+library(dplyr)
+
+set.seed(123)
+
+# ---------------------------------------------------------
+# Step 1. Build the analysis dataset using LASSO-selected
+# original variables.
+# Note:
+# - employmentstudent came from employment
+# - any_life_eventYes came from any_life_event
+# - as.numeric(EQ_VAS) is treated here as EQ_VAS numeric
+# ---------------------------------------------------------
+rf_lasso_data <- data1 |>
+  select(
+    pss4_total,
+    income_ord,
+    employment,
+    EQ_VAS,
+    MEQtotal_new,
+    phq9_total,
+    gad7_total,
+    self_efficacy_total,
+    family_support_total,
+    any_life_event,
+    ACE_total
+  ) |>
+  mutate(
+    EQ_VAS = as.numeric(EQ_VAS)
+  ) |>
+  filter(if_all(everything(), ~ !is.na(.)))
+
+# Convert categorical predictors to factors
+rf_lasso_data$employment <- as.factor(rf_lasso_data$employment)
+rf_lasso_data$any_life_event <- as.factor(rf_lasso_data$any_life_event)
+
+# Optional check
+str(rf_lasso_data)
+
+# ---------------------------------------------------------
+# Step 2. Split into training and test sets
+# ---------------------------------------------------------
+split_lasso <- initial_split(rf_lasso_data, prop = 0.8)
+train_lasso <- training(split_lasso)
+test_lasso  <- testing(split_lasso)
+
+# ---------------------------------------------------------
+# Step 3. Create 5-fold CV on the training set
+# ---------------------------------------------------------
+folds_lasso <- vfold_cv(train_lasso, v = 5)
+
+# ---------------------------------------------------------
+# Step 4. Define the recipe
+# step_novel() helps handle unseen factor levels in resamples.
+# step_dummy() converts categorical predictors into dummies.
+# ---------------------------------------------------------
+rf_lasso_recipe <- recipe(pss4_total ~ ., data = train_lasso) |>
+  step_novel(all_nominal_predictors()) |>
+  step_dummy(all_nominal_predictors())
+
+# ---------------------------------------------------------
+# Step 5. Define the random forest model
+# We tune mtry and min_n, and keep trees fixed at 500.
+# ---------------------------------------------------------
+rf_lasso_spec <- rand_forest(
+  mtry = tune(),
+  min_n = tune(),
+  trees = 500
+) |>
+  set_engine("ranger") |>
+  set_mode("regression")
+
+# ---------------------------------------------------------
+# Step 6. Create workflow
+# ---------------------------------------------------------
+rf_lasso_workflow <- workflow() |>
+  add_recipe(rf_lasso_recipe) |>
+  add_model(rf_lasso_spec)
+
+# ---------------------------------------------------------
+# Step 7. Define the tuning grid
+# Since the model uses fewer predictors, the mtry range
+# can be set smaller than in the full RF model.
+# ---------------------------------------------------------
+rf_lasso_grid <- grid_regular(
+  mtry(range = c(1, 8)),
+  min_n(range = c(5, 25)),
+  levels = 5
+)
+
+# ---------------------------------------------------------
+# Step 8. Tune hyperparameters using 5-fold CV
+# ---------------------------------------------------------
+rf_lasso_tuned <- tune_grid(
+  rf_lasso_workflow,
+  resamples = folds_lasso,
+  grid = rf_lasso_grid,
+  metrics = metric_set(rmse, rsq)
+)
+
+# View tuning results
+collect_metrics(rf_lasso_tuned)
+
+# ---------------------------------------------------------
+# Step 9. Select the best hyperparameters based on RMSE
+# ---------------------------------------------------------
+best_rf_lasso <- select_best(rf_lasso_tuned, metric = "rmse")
+best_rf_lasso
+
+# ---------------------------------------------------------
+# Step 10. Finalize workflow with best hyperparameters
+# and fit on the full training set
+# ---------------------------------------------------------
+final_rf_lasso_workflow <- finalize_workflow(
+  rf_lasso_workflow,
+  best_rf_lasso
+)
+
+final_rf_lasso_fit <- fit(final_rf_lasso_workflow, data = train_lasso)
+
+# ---------------------------------------------------------
+# Step 11. Evaluate the final model on the test set
+# ---------------------------------------------------------
+rf_lasso_test_pred <- predict(final_rf_lasso_fit, new_data = test_lasso) |>
+  bind_cols(test_lasso |> select(pss4_total))
+
+metrics(rf_lasso_test_pred, truth = pss4_total, estimate = .pred)
+```
+
+The random forest model using the LASSO-selected predictors achieved its best performance with mtry = 4 and min_n = 25. On the held-out test set, the model yielded an RMSE of 2.17, an R² of 0.654, and an MAE of 1.65. Compared with the full random forest model, the LASSO-based random forest performed very similarly, with slightly lower RMSE and slightly higher R². This suggests that the smaller set of predictors retained by LASSO captured most of the predictive signal in perceived stress, allowing for a more parsimonious model without meaningful loss of performance.
+
+

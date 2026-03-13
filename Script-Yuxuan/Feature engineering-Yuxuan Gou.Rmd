@@ -1,0 +1,1052 @@
+---
+title: "Feature Engineering-Yuxuan"
+author: "Yuxuan (Rebecca)"
+date: "2026-03-13"
+output: html_document
+format:
+  html:
+    embed-resources: true
+---
+The first part is feature engineering.
+
+
+# 1. Demographic Features: age, gender, education, income_ord, hukou, marital, employment
+
+```{r}
+library(dplyr)
+library(stringr)
+
+data1$age <- data1$年龄
+
+edu_levels <- c(
+  "未接受过正规教育",
+  "小学",
+  "初中",
+  "高中",
+  "中专",
+  "大专",
+  "大学本科",
+  "硕士研究生",
+  "博士研究生"
+)
+
+income_levels <- c(
+  "≤1000",
+  "1001-2000",
+  "2001-3000",
+  "3001-4000",
+  "4001-5000",
+  "5001-6000",
+  "6001-9000",
+  "9001-12000",
+  "12001-15000",
+  "≥15001"
+)
+
+data1 <- data1 |>
+  mutate(
+    edu_raw = str_squish(as.character(`11、您的最高文化程度（所获得的最高学历）:`)),
+    edu_std = str_replace_all(edu_raw, c(
+      "中專" = "中专",
+      "大專" = "大专",
+      "大學本科" = "大学本科",
+      "小學" = "小学",
+      "碩士研究生" = "硕士研究生"
+    )),
+    edu_ord = factor(
+      edu_std,
+      levels = edu_levels,
+      ordered = TRUE
+    ),
+    education = as.numeric(edu_ord),
+
+    gender = case_when(
+      `3、您的性别:` == "男" ~ "male",
+      `3、您的性别:` == "女" ~ "female",
+      TRUE ~ NA_character_
+    ),
+
+    hukou_raw = str_squish(as.character(`35、您的户口性质:`)),
+    hukou_raw = str_replace_all(hukou_raw, c("非農業" = "非农业")),
+    hukou = case_when(
+      hukou_raw == "农业" ~ "agricultural",
+      hukou_raw == "非农业" ~ "non-agricultural",
+      TRUE ~ NA_character_
+    ),
+
+    marital_raw = str_squish(as.character(`36、您的婚姻情况:`)),
+    marital_raw = str_replace_all(marital_raw, c(
+      "複婚" = "复婚",
+      "離異" = "离异",
+      "喪偶" = "丧偶",
+      "單身" = "单身"
+    )),
+    marital = case_when(
+      str_detect(marital_raw, "^已婚") ~ "Married",
+      str_detect(marital_raw, "^未婚") ~ "Unmarried",
+      str_detect(marital_raw, "^离异") ~ "Divorced",
+      str_detect(marital_raw, "^丧偶") ~ "Widowed",
+      TRUE ~ NA_character_
+    ),
+
+    income_ord = as.numeric(
+      factor(
+        str_squish(as.character(`52、目前您家庭的人均月收入是:（元）`)),
+        levels = income_levels,
+        ordered = TRUE
+      )
+    )
+  )
+
+table(data1$`10、您目前的职业状态:`)
+
+data1 <- data1 %>%
+  mutate(
+    employment = str_trim(as.character(`10、您目前的职业状态:`)),
+    employment = case_when(
+      employment %in% c("在职", "在職") ~ "employed",
+      employment %in% c("学生", "學生") ~ "student",
+      employment %in% c("失业", "失業", "待业/无业", "待業/無業") ~ "unemployed",
+      employment %in% c("无固定职业（或自由职业）", "無固定職業（或自由職業）") ~ "flexible_job",
+      employment %in% c("离/退休", "離/退休") ~ "retired",
+      TRUE ~ NA_character_
+    ),
+    employment = factor(
+      employment,
+      levels = c("employed", "student", "unemployed", "flexible_job", "retired")
+    )
+  )
+
+
+```
+
+
+
+
+
+
+
+# 2. Health Features: bmi, health_vas, chronic_disease, chronic_count
+
+```{r}
+
+data1 <- data1 %>%
+  mutate(
+    bmi = `7、您的体重（单位:公斤） :` / (`6、您的身高（单位:厘米cm） :` / 100)^2
+  )
+
+summary(data1$bmi)
+hist(data1$bmi, breaks = 30)
+
+data1 <- data1 %>%
+  mutate(
+    bmi = if_else(
+      `6、您的身高（单位:厘米cm） :` >= 140 &
+      `6、您的身高（单位:厘米cm） :` <= 210 &
+      `7、您的体重（单位:公斤） :` >= 30 &
+      `7、您的体重（单位:公斤） :` <= 200,
+      `7、您的体重（单位:公斤） :` / (`6、您的身高（单位:厘米cm） :` / 100)^2,
+      NA_real_
+    )
+  )
+
+data1 <- data1 %>%
+  mutate(
+    bmi_cat = case_when(
+      bmi < 18.5 ~ "underweight",
+      bmi < 24 ~ "normal",
+      bmi < 28 ~ "overweight",
+      bmi >= 28 ~ "obese",
+      TRUE ~ NA_character_
+    )
+  )
+
+
+### Health condition: EQ Visual Analogue Scale
+data1$EQ_VAS <- as.numeric(data1$`63、我们想知道您今天健康状况的好坏。这个刻度尺上有从0到100的数字，100 代表您想象中最好的健康状况，0代表您想象中最差的健康状况，请指出您今天的健康状况如何，并拉动滑竿条到相应的数字。`)
+
+## chronic disease
+
+data1 <- data1 %>%
+  mutate(
+    chronic_disease = case_when(
+      `24、您是否经医生诊断，目前确诊以下疾病?` == "无" ~ "No",
+      is.na(`24、您是否经医生诊断，目前确诊以下疾病?`) ~ NA_character_,
+      TRUE ~ "Yes"
+    )
+  )
+table(data1$chronic_disease)
+```
+
+
+
+# 3. Sleep Features: sleep_quality and chronotype
+```{r}
+
+
+data1$`122、如果你能够完全自由地计划白天的时间，你希望大约在什么时间起床?` <- gsub(
+  "早上11點至正午12點 \\(11:00-12:00\\)",
+  "早上 11 点至正午 12 点 (11:00-12:00)",
+  data1$`122、如果你能够完全自由地计划白天的时间，你希望大约在什么时间起床?`
+)
+
+data1$`122、如果你能够完全自由地计划白天的时间，你希望大约在什么时间起床?` <- gsub(
+  "早上5點至6點半 \\(05:00-06:30\\)",
+  "早上 5 点至 6 点半 (05:00-06:30)",
+  data1$`122、如果你能够完全自由地计划白天的时间，你希望大约在什么时间起床?`
+)
+
+data1$`122、如果你能够完全自由地计划白天的时间，你希望大约在什么时间起床?` <- gsub(
+  "早上6點半至7點45分 \\(06:30-07:45\\)",
+  "早上 6 点半至 7 点 45 分(06:30-07:45)",
+  data1$`122、如果你能够完全自由地计划白天的时间，你希望大约在什么时间起床?`
+)
+
+data1$`122、如果你能够完全自由地计划白天的时间，你希望大约在什么时间起床?` <- gsub(
+  "早上7點45分至9點45分 \\(07:45-09:45\\)",
+  "早上 7 点 45 分至 9 点 45 分(07:45-09:45 )",
+  data1$`122、如果你能够完全自由地计划白天的时间，你希望大约在什么时间起床?`
+)
+
+data1$`122、如果你能够完全自由地计划白天的时间，你希望大约在什么时间起床?` <- gsub(
+  "早上9 點45分至11點 \\(09:45-11:00\\)",
+  "早上 9 点 45 分至 11 点 (09:45-11:00)",
+  data1$`122、如果你能够完全自由地计划白天的时间，你希望大约在什么时间起床?`
+)
+
+data1$`123、清晨起床后的半小时内，你的感觉如何?` <- gsub(
+  "稍為疲倦",
+  "稍为疲倦",
+  data1$`123、清晨起床后的半小时内，你的感觉如何?`
+)
+
+data1$`124、在夜晚你大约到什么时候你会感到疲倦，而且需要睡觉?` <- gsub(
+  "凌晨 12 點 45 分至 2 點 \\(00:45-02:00 h\\)",
+  "凌晨 12 点 45 分至 2 点 (00:45-02:00 h)",
+  data1$`124、在夜晚你大约到什么时候你会感到疲倦，而且需要睡觉?`
+)
+
+data1$`124、在夜晚你大约到什么时候你会感到疲倦，而且需要睡觉?` <- gsub(
+  "凌晨 2 點至 3 點 \\(02:00-03:00 h\\)",
+  "凌晨 2 点至 3 点(02:00-03:00 h)",
+  data1$`124、在夜晚你大约到什么时候你会感到疲倦，而且需要睡觉?`
+)
+
+data1$`124、在夜晚你大约到什么时候你会感到疲倦，而且需要睡觉?` <- gsub(
+  "晚上 10 點 15 分至 12 點 45 分\\(22:15-00:45 h\\)",
+  "晚上 10 点 15 分至 12 点 45 分(22:15-00:45 h)",
+  data1$`124、在夜晚你大约到什么时候你会感到疲倦，而且需要睡觉?`
+)
+
+data1$`124、在夜晚你大约到什么时候你会感到疲倦，而且需要睡觉?` <- gsub(
+  "晚上 8 點至 9 點 \\(20:00-21:00 h\\)",
+  "晚上 8 点至 9 点 (20:00-21:00 h)",
+  data1$`124、在夜晚你大约到什么时候你会感到疲倦，而且需要睡觉?`
+)
+
+data1$`124、在夜晚你大约到什么时候你会感到疲倦，而且需要睡觉?` <- gsub(
+  "晚上 9 點至 10 點 15 分 \\(21:00-22:15 h\\)",
+  "晚上 9 点至 10 点 15 分 (21:00-22:15 h)",
+  data1$`124、在夜晚你大约到什么时候你会感到疲倦，而且需要睡觉?`
+)
+
+data1$`125、一天之中以下哪个时段是你的最佳时间?` <- gsub(
+  "下午 5 點至 10 點 \\(17:00-22:00 h\\)",
+  "下午 5 点至 10 点 (17:00-22:00 h)",
+  data1$`125、一天之中以下哪个时段是你的最佳时间?`
+)
+
+data1$`125、一天之中以下哪个时段是你的最佳时间?` <- gsub(
+  "早上 10 點至下午 5 點 \\(10:00-17:00 h\\)",
+  "早上 10 点至下午 5 点 (10:00-17:00 h)",
+  data1$`125、一天之中以下哪个时段是你的最佳时间?`
+)
+
+data1$`125、一天之中以下哪个时段是你的最佳时间?` <- gsub(
+  "早上 5 點至 8 點 \\(05:00-08:00 h\\)",
+  "早上 5 点至 8 点 (05:00-08:00 h)",
+  data1$`125、一天之中以下哪个时段是你的最佳时间?`
+)
+
+data1$`125、一天之中以下哪个时段是你的最佳时间?` <- gsub(
+  "早上 8 點至 10 點 \\(08:00-10:00 h\\)",
+  "早上 8 点至 10 点 (08:00-10:00 h)",
+  data1$`125、一天之中以下哪个时段是你的最佳时间?`
+)
+
+data1$`125、一天之中以下哪个时段是你的最佳时间?` <- gsub(
+  "晚上 10 點至凌晨 5 點 \\(22:00-05:00 h\\)",
+  "晚上 10 点至凌晨 5 点 (22:00-05:00 h)",
+  data1$`125、一天之中以下哪个时段是你的最佳时间?`
+)
+
+data1$`126、人可分为“清晨”型和“夜晚”型,你认为你自己属于哪一类型?` <- gsub(
+  "“夜晚”型多過“清晨”型",
+  "“夜晚”型多过“清晨”型",
+  data1$`126、人可分为“清晨”型和“夜晚”型,你认为你自己属于哪一类型?`
+)
+
+data1$`126、人可分为“清晨”型和“夜晚”型,你认为你自己属于哪一类型?` <- gsub(
+  "“清晨”型多過“夜晚”型",
+  "“清晨”型多过“夜晚”型",
+  data1$`126、人可分为“清晨”型和“夜晚”型,你认为你自己属于哪一类型?`
+)
+
+data1$`126、人可分为“清晨”型和“夜晚”型,你认为你自己属于哪一类型?` <- gsub(
+  "絕對“夜晚”型",
+  "绝对“夜晚”型",
+  data1$`126、人可分为“清晨”型和“夜晚”型,你认为你自己属于哪一类型?`
+)
+
+data1$`126、人可分为“清晨”型和“夜晚”型,你认为你自己属于哪一类型?` <- gsub(
+  "絕對“清晨”型",
+  "绝对“清晨”型",
+  data1$`126、人可分为“清晨”型和“夜晚”型,你认为你自己属于哪一类型?`
+)
+
+score_map_122 <- c(
+  "早上 5 点至 6 点半 (05:00-06:30)" = 5,
+  "早上 6 点半至 7 点 45 分(06:30-07:45)" = 4,
+  "早上 7 点 45 分至 9 点 45 分(07:45-09:45 )" = 3,
+  "早上 9 点 45 分至 11 点 (09:45-11:00)" = 2,
+  "早上 11 点至正午 12 点 (11:00-12:00)" = 1
+)
+
+score_map_123 <- c(
+  "非常疲倦" = 1,
+  "稍为疲倦" = 2,
+  "一般清醒" = 3,
+  "非常清醒" = 4
+)
+
+score_map_124 <- c(
+  "凌晨 2 点至 3 点(02:00-03:00 h)" = 1,
+  "凌晨 12 点 45 分至 2 点 (00:45-02:00 h)" = 2,
+  "晚上 10 点 15 分至 12 点 45 分(22:15-00:45 h)" = 3,
+  "晚上 9 点至 10 点 15 分 (21:00-22:15 h)" = 4,
+  "晚上 8 点至 9 点 (20:00-21:00 h)" = 5
+)
+
+score_map_125 <- c(
+  "晚上 10 点至凌晨 5 点 (22:00-05:00 h)" = 1,
+  "下午 5 点至 10 点 (17:00-22:00 h)" = 2,
+  "早上 10 点至下午 5 点 (10:00-17:00 h)" = 3,
+  "早上 8 点至 10 点 (08:00-10:00 h)" = 4,
+  "早上 5 点至 8 点 (05:00-08:00 h)" = 5
+)
+
+score_map_126 <- c(
+  "绝对“夜晚”型" = 1,
+  "“夜晚”型多过“清晨”型" = 2,
+  "“清晨”型多过“夜晚”型" = 3,
+  "绝对“清晨”型" = 4
+)
+
+data1$MEQ1_new <- unname(score_map_122[data1$`122、如果你能够完全自由地计划白天的时间，你希望大约在什么时间起床?`])
+data1$MEQ2_new <- unname(score_map_123[data1$`123、清晨起床后的半小时内，你的感觉如何?`])
+data1$MEQ3_new <- unname(score_map_124[data1$`124、在夜晚你大约到什么时候你会感到疲倦，而且需要睡觉?`])
+data1$MEQ4_new <- unname(score_map_125[data1$`125、一天之中以下哪个时段是你的最佳时间?`])
+data1$MEQ5_new <- unname(score_map_126[data1$`126、人可分为“清晨”型和“夜晚”型,你认为你自己属于哪一类型?`])
+
+data1$MEQtotal_new <- data1$MEQ1_new + data1$MEQ2_new + data1$MEQ3_new + data1$MEQ4_new + data1$MEQ5_new
+
+table(data1$MEQ1_new, useNA = "ifany")
+table(data1$MEQ2_new, useNA = "ifany")
+table(data1$MEQ3_new, useNA = "ifany")
+table(data1$MEQ4_new, useNA = "ifany")
+table(data1$MEQ5_new, useNA = "ifany")
+table(data1$MEQtotal_new, useNA = "ifany")
+summary(data1$MEQtotal_new)
+
+
+
+##### sleep quality
+num <- function(x) {
+  suppressWarnings(as.numeric(as.character(x)))
+}
+
+clean <- function(x) {
+  as.character(x) %>%
+    str_trim() %>%
+    str_replace_all("/", "／")
+}
+
+get_col <- function(prefix, data) {
+  hits <- names(data)[grepl(paste0("^", prefix), names(data))]
+  if (length(hits) == 0) stop(paste("Column not found for prefix:", prefix))
+  hits[1]
+}
+
+q116 <- get_col("116、", data1)
+q117 <- get_col("117、", data1)
+q118 <- get_col("118、", data1)
+q119 <- get_col("119、", data1)
+q120 <- get_col("120、", data1)
+q121 <- get_col("121、", data1)
+
+bed <- num(data1[[q116]])
+bed[bed == 24] <- 0
+
+wake <- num(data1[[q117]])
+wake[wake == 24] <- 0
+
+bed_m <- bed * 60
+wake_m <- wake * 60
+wake_m_adj <- ifelse(wake_m <= bed_m, wake_m + 1440, wake_m)
+
+tib <- (wake_m_adj - bed_m) / 60
+tib[tib <= 0] <- NA_real_
+
+sleep_h <- num(data1[[q119]])
+
+sleep_eff <- 100 * sleep_h / tib
+sleep_eff[!is.finite(sleep_eff)] <- NA_real_
+
+c_eff <- case_when(
+  sleep_eff > 85 ~ 0,
+  sleep_eff <= 85 & sleep_eff >= 75 ~ 1,
+  sleep_eff < 75 & sleep_eff >= 65 ~ 2,
+  sleep_eff < 65 ~ 3,
+  TRUE ~ NA_real_
+)
+
+qual_raw <- clean(data1[[q121]])
+c_qual <- case_when(
+  qual_raw %in% c("很好") ~ 0,
+  qual_raw %in% c("较好", "較好") ~ 1,
+  qual_raw %in% c("较差", "較差") ~ 2,
+  qual_raw %in% c("很差") ~ 3,
+  TRUE ~ NA_real_
+)
+
+lat_raw <- clean(data1[[q118]])
+c_lat <- case_when(
+  lat_raw %in% c("≤15分钟", "≤15分鐘", "15分钟以内", "15分鐘以內") ~ 0,
+  lat_raw %in% c("16-30分钟", "16-30分鐘", "16～30分钟", "16～30分鐘") ~ 1,
+  lat_raw %in% c("31-60分钟", "31-60分鐘", "31～60分钟", "31～60分鐘", "60分钟", "60分鐘") ~ 2,
+  lat_raw %in% c(">60分钟", ">60分鐘", "＞60分钟", "＞60分鐘") ~ 3,
+  TRUE ~ NA_real_
+)
+
+c_dur <- case_when(
+  sleep_h > 7 ~ 0,
+  sleep_h <= 7 & sleep_h >= 6 ~ 1,
+  sleep_h < 6 & sleep_h >= 5 ~ 2,
+  sleep_h < 5 ~ 3,
+  TRUE ~ NA_real_
+)
+
+dist_raw <- clean(data1[[q120]])
+c_dist <- case_when(
+  dist_raw %in% c("无", "無") ~ 0,
+  dist_raw %in% c("<1次／周", "<1次/周", "少于1次／周", "少於1次／周") ~ 1,
+  dist_raw %in% c("1次／周", "1次/周", "1-2次／周", "1-2次/周", "1次／週", "1-2次／週") ~ 2,
+  dist_raw %in% c("≥3次／周", "≥3次/周", "3次以上／周", "3次以上/周", "≥3次／週") ~ 3,
+  TRUE ~ NA_real_
+)
+
+components <- tibble(
+  c_qual = c_qual,
+  c_lat  = c_lat,
+  c_dur  = c_dur,
+  c_dist = c_dist,
+  c_eff  = c_eff
+)
+
+data1 <- data1 %>%
+  mutate(
+    sleep_quality_worse = if_else(
+      rowSums(is.na(components)) == 0,
+      rowSums(components),
+      NA_real_
+    ),
+    sleep_quality = 15 - sleep_quality_worse
+  )
+
+```
+
+
+
+# 4. Psychosocial Features: phq9_total, gad7_total, social_support_total, self_efficacy_total, resilience_total
+
+```{r}
+
+#####PHQ
+phq_map <- function(x) {
+  x <- str_trim(as.character(x))
+  case_when(
+    x %in% c("从来没有", "從來沒有") ~ 0,
+    x %in% c("有几天", "有幾天") ~ 1,
+    x %in% c("刚超过一半天数", "剛超過一半天數") ~ 2,
+    x %in% c("接近每天") ~ 3,
+    TRUE ~ NA_real_
+  )
+}
+
+data1 <- data1 %>%
+  mutate(
+    phq1 = phq_map(`82、在过去两周，您经常受到以下问题的困扰吗?—做任何事都觉得沉闷或者根本不想做任何事`),
+    phq2 = phq_map(`82、情绪低落、抑郁或绝望`),
+    phq3 = phq_map(`82、难以入睡;半夜会醒，或相反，睡觉时间过多`),
+    phq4 = phq_map(`82、觉得疲倦或没有活力`),
+    phq5 = phq_map(`82、胃口极差或饮食过量`),
+    phq6 = phq_map(`82、不喜欢自己──觉得自己做得不好、对自己失望或有负家人期望`),
+    phq7 = phq_map(`82、难于集中精神做事，例如看报纸或看电视`),
+    phq8 = phq_map(`82、其它人反映你行动或说话迟缓;或者相反，您比平常活动更多──坐立不安、停不下来`),
+    phq9 = phq_map(`82、想到自己死或者自残`)
+  ) %>%
+  mutate(
+    phq9_total = phq1 + phq2 + phq3 + phq4 + phq5 + phq6 + phq7 + phq8 + phq9
+  )
+
+
+
+
+#### GAD-7 
+table(data1$`83、不能够停止或控制担忧`)
+table(data1$`83、变得容易烦恼或急躁`)
+table(data1$`83、在过去两周，您生活中出现以下症状的频率情况是?—感觉紧张，焦虑或急切`)
+table(data1$`83、对各种各样的事情担忧过多`)
+table(data1$`83、很难放松下来`)
+table(data1$`83、感到似乎将有可怕的事情发生而害怕`)
+table(data1$`83、由于不安而无法静坐`)
+
+
+gad_map <- function(x) {
+  x <- str_trim(as.character(x))
+  case_when(
+    x %in% c("从来没有", "從來沒有") ~ 0,
+    x %in% c("有几天", "有幾天") ~ 1,
+    x %in% c("刚超过一半天数", "剛超過一半天數") ~ 2,
+    x %in% c("接近每天") ~ 3,
+    TRUE ~ NA_real_
+  )
+}
+
+data1 <- data1 %>%
+  mutate(
+    gad1 = gad_map(`83、在过去两周，您生活中出现以下症状的频率情况是?—感觉紧张，焦虑或急切`),
+    gad2 = gad_map(`83、不能够停止或控制担忧`),
+    gad3 = gad_map(`83、对各种各样的事情担忧过多`),
+    gad4 = gad_map(`83、很难放松下来`),
+    gad5 = gad_map(`83、由于不安而无法静坐`),
+    gad6 = gad_map(`83、变得容易烦恼或急躁`),
+    gad7 = gad_map(`83、感到似乎将有可怕的事情发生而害怕`)
+  ) %>%
+  mutate(
+    gad7_total = gad1 + gad2 + gad3 + gad4 + gad5 + gad6 + gad7
+  )
+
+
+### social support
+
+table(data1$`85、在我的生活中有某些人（领导、亲戚、同事）关心着我的感情`)
+table(data1$`85、我的朋友们能真正的帮助我`)
+table(data1$`85、请您根据自己感受到社会支持的实际情况，在每句后面选择一个答案。—在需要时我能够从家庭获得感情上的帮助和支持`)
+
+
+support_map <- function(x) {
+  x <- str_trim(as.character(x))
+  case_when(
+    x %in% c("极不同意", "極不同意") ~ 1,
+    x %in% c("很不同意") ~ 2,
+    x %in% c("稍不同意") ~ 3,
+    x %in% c("中立") ~ 4,
+    x %in% c("稍同意") ~ 5,
+    x %in% c("很同意") ~ 6,
+    x %in% c("极同意", "極同意") ~ 7,
+    x %in% c("", "(空)") ~ NA_real_,
+    TRUE ~ NA_real_
+  )
+}
+
+data1 <- data1 %>%
+  mutate(
+    support_family = support_map(`85、请您根据自己感受到社会支持的实际情况，在每句后面选择一个答案。—在需要时我能够从家庭获得感情上的帮助和支持`),
+    support_friend = support_map(`85、我的朋友们能真正的帮助我`),
+    support_other  = support_map(`85、在我的生活中有某些人（领导、亲戚、同事）关心着我的感情`)
+  ) %>%
+  mutate(
+    social_support_total = support_family + support_friend + support_other
+  )
+
+
+###### self-efficacy
+
+
+data1$`86、我将能够成功地克服许多挑战` <- gsub(
+  "既不同意也不反對",
+  "既不同意也不反对",
+  data1$`86、我将能够成功地克服许多挑战`
+)
+
+data1$`86、我有信心能有效地完成许多不同的任务` <- gsub(
+  "既不同意也不反對",
+  "既不同意也不反对",
+  data1$`86、我有信心能有效地完成许多不同的任务`
+)
+
+data1$`86、请选择最合适您的选项。—当面临困难的任务时，我确信我能够完成它们` <- gsub(
+  "既不同意也不反對",
+  "既不同意也不反对",
+  data1$`86、请选择最合适您的选项。—当面临困难的任务时，我确信我能够完成它们`
+)
+
+score_map <- c(
+  "非常不同意" = 1,
+  "不同意" = 2,
+  "既不同意也不反对" = 3,
+  "同意" = 4,
+  "非常同意" = 5
+)
+
+data1$selfeff_1 <- unname(score_map[data1$`86、我将能够成功地克服许多挑战`])
+data1$selfeff_2 <- unname(score_map[data1$`86、我有信心能有效地完成许多不同的任务`])
+data1$selfeff_3 <- unname(score_map[data1$`86、请选择最合适您的选项。—当面临困难的任务时，我确信我能够完成它们`])
+
+data1$self_efficacy_total <- data1$selfeff_1 + data1$selfeff_2 + data1$selfeff_3
+data1$self_efficacy_mean <- rowMeans(
+  data1[, c("selfeff_1", "selfeff_2", "selfeff_3")],
+  na.rm = FALSE
+)
+
+table(data1$self_efficacy_total, useNA = "ifany")
+summary(data1$self_efficacy_total)
+
+
+
+#### resilience
+
+
+data1$`88、经历艰难或疾病后，我往往会很快恢复` <- gsub(
+  "從來不",
+  "从来不",
+  data1$`88、经历艰难或疾病后，我往往会很快恢复`
+)
+
+data1$`88、经历艰难或疾病后，我往往会很快恢复` <- gsub(
+  "有時",
+  "有时",
+  data1$`88、经历艰难或疾病后，我往往会很快恢复`
+)
+
+data1$`88、经历艰难或疾病后，我往往会很快恢复` <- gsub(
+  "經常",
+  "经常",
+  data1$`88、经历艰难或疾病后，我往往会很快恢复`
+)
+
+data1$`88、请根据过去一个月您的情况，对下面每个阐述，选出最符合你的一项。注意回答这些问题没有对错之分。—我能适应变化` <- gsub(
+  "從來不",
+  "从来不",
+  data1$`88、请根据过去一个月您的情况，对下面每个阐述，选出最符合你的一项。注意回答这些问题没有对错之分。—我能适应变化`
+)
+
+data1$`88、请根据过去一个月您的情况，对下面每个阐述，选出最符合你的一项。注意回答这些问题没有对错之分。—我能适应变化` <- gsub(
+  "有時",
+  "有时",
+  data1$`88、请根据过去一个月您的情况，对下面每个阐述，选出最符合你的一项。注意回答这些问题没有对错之分。—我能适应变化`
+)
+
+data1$`88、请根据过去一个月您的情况，对下面每个阐述，选出最符合你的一项。注意回答这些问题没有对错之分。—我能适应变化` <- gsub(
+  "經常",
+  "经常",
+  data1$`88、请根据过去一个月您的情况，对下面每个阐述，选出最符合你的一项。注意回答这些问题没有对错之分。—我能适应变化`
+)
+
+score_map <- c(
+  "从来不" = 1,
+  "很少" = 2,
+  "有时" = 3,
+  "经常" = 4,
+  "一直如此" = 5
+)
+
+data1$resilience_1 <- unname(score_map[data1$`88、经历艰难或疾病后，我往往会很快恢复`])
+data1$resilience_2 <- unname(score_map[data1$`88、请根据过去一个月您的情况，对下面每个阐述，选出最符合你的一项。注意回答这些问题没有对错之分。—我能适应变化`])
+
+data1$resilience_total <- data1$resilience_1 + data1$resilience_2
+data1$resilience_mean <- rowMeans(
+  data1[, c("resilience_1", "resilience_2")],
+  na.rm = FALSE
+)
+
+table(data1$resilience_total, useNA = "ifany")
+summary(data1$resilience_total)
+
+
+```
+
+
+
+# 5. Life Context Features: life_event_count, live_alone, debt_any
+
+```{r}
+
+table(data1$any_life_event)
+
+data1 <- data1 %>%
+  mutate(
+    any_life_event = case_when(
+      `33、您近一年内是否经历以下生活事件?` == "无" ~ "No",
+      is.na(`33、您近一年内是否经历以下生活事件?`) ~ NA_character_,
+      `33、您近一年内是否经历以下生活事件?` != "无" ~ "Yes"
+    ),
+    any_life_event = factor(any_life_event, levels = c("No", "Yes"))
+  )
+
+
+#### living alone
+data1 <- data1 %>%
+  mutate(
+    live_alone = case_when(
+      `39、近三个月内，您是否独居` == "是" ~ "Yes",
+      `39、近三个月内，您是否独居` == "否" ~ "No",
+      TRUE ~ NA_character_
+    ),
+    live_alone = factor(live_alone, levels = c("No", "Yes"))
+  )
+
+
+######debt
+
+data1 <- data1 %>%
+  mutate(
+    debt_any = case_when(
+      str_trim(as.character(`51、您家目前是否负有以下债务?`)) %in% c("无负债", "無負債") ~ "No",
+      is.na(`51、您家目前是否负有以下债务?`) ~ NA_character_,
+      TRUE ~ "Yes"
+    ),
+    debt_any = factor(debt_any, levels = c("No", "Yes"))
+  )
+table(data1$debt_any,useNA = "ifany")
+
+
+```
+
+
+
+
+# 6. Optional Features: ACE_total, family_support_total, exercise_minutes, smoking, drinking
+
+```{r}
+table(data1$`65、在我的家庭里，在很艰难的时候，我们也保持希望`)
+table(data1$`65、在我的家庭里，在需要的时候，我们彼此帮助去寻求医疗服务(如:挂号)`)
+table(data1$`65、在我的家庭里，我们不信任医护人员`)
+table(data1$`65、在我的家庭里，我们互相帮助为了健康而做出改变`)
+table(data1$`65、在我的家庭里，我在家庭关系中感到有安全感`)
+table(data1$`65、在过去的 12 个月里，在负担基本的生活开销后，我们家就没有闲钱了`)
+table(data1$`65、在过去的 12 个月里，我家的住房不能满足家庭的需求`)
+table(data1$`65、如果我们需要经济上的帮助，我们家可以向家人以外的人借到钱(如:1000元)`)
+table(data1$`65、当我们在学校或工作中遇到问题时，我们家可以向家人以外的人寻求帮助`)
+table(data1$`65、请指出您在多大程度上同意或不同意以下陈述。—在我的家庭里，我们互相支持`)
+
+
+
+family_map <- function(x) {
+  x <- str_trim(as.character(x))
+  case_when(
+    x %in% c("非常不同意") ~ 1,
+    x %in% c("有些不同意") ~ 2,
+    x %in% c("既不同意也不反对", "既不同意也不反對") ~ 3,
+    x %in% c("有些同意") ~ 4,
+    x %in% c("非常同意") ~ 5,
+    TRUE ~ NA_real_
+  )
+}
+
+data1 <- data1 %>%
+  mutate(
+    fam1 = family_map(`65、在我的家庭里，在很艰难的时候，我们也保持希望`),
+    fam2 = family_map(`65、在我的家庭里，在需要的时候，我们彼此帮助去寻求医疗服务(如:挂号)`),
+    fam3_raw = family_map(`65、在我的家庭里，我们不信任医护人员`),
+    fam4 = family_map(`65、在我的家庭里，我们互相帮助为了健康而做出改变`),
+    fam5 = family_map(`65、在我的家庭里，我在家庭关系中感到有安全感`),
+    fam6_raw = family_map(`65、在过去的 12 个月里，在负担基本的生活开销后，我们家就没有闲钱了`),
+    fam7_raw = family_map(`65、在过去的 12 个月里，我家的住房不能满足家庭的需求`),
+    fam8 = family_map(`65、如果我们需要经济上的帮助，我们家可以向家人以外的人借到钱(如:1000元)`),
+    fam9 = family_map(`65、当我们在学校或工作中遇到问题时，我们家可以向家人以外的人寻求帮助`),
+    fam10 = family_map(`65、请指出您在多大程度上同意或不同意以下陈述。—在我的家庭里，我们互相支持`)
+  ) %>%
+  mutate(
+    fam3 = if_else(!is.na(fam3_raw), 6 - fam3_raw, NA_real_),
+    fam6 = if_else(!is.na(fam6_raw), 6 - fam6_raw, NA_real_),
+    fam7 = if_else(!is.na(fam7_raw), 6 - fam7_raw, NA_real_)
+  ) %>%
+  mutate(
+    family_support_total = fam1 + fam2 + fam3 + fam4 + fam5 + fam6 + fam7 + fam8 + fam9 + fam10
+  )
+```
+
+
+
+# Calculate the score for self-effecacy scale
+```{r}
+
+data1$`86、我将能够成功地克服许多挑战` <- gsub(
+  "既不同意也不反對",
+  "既不同意也不反对",
+  data1$`86、我将能够成功地克服许多挑战`
+)
+
+data1$`86、我有信心能有效地完成许多不同的任务` <- gsub(
+  "既不同意也不反對",
+  "既不同意也不反对",
+  data1$`86、我有信心能有效地完成许多不同的任务`
+)
+
+data1$`86、请选择最合适您的选项。—当面临困难的任务时，我确信我能够完成它们` <- gsub(
+  "既不同意也不反對",
+  "既不同意也不反对",
+  data1$`86、请选择最合适您的选项。—当面临困难的任务时，我确信我能够完成它们`
+)
+
+score_map <- c(
+  "非常不同意" = 1,
+  "不同意" = 2,
+  "既不同意也不反对" = 3,
+  "同意" = 4,
+  "非常同意" = 5
+)
+
+data1$selfeff_1 <- unname(score_map[data1$`86、我将能够成功地克服许多挑战`])
+data1$selfeff_2 <- unname(score_map[data1$`86、我有信心能有效地完成许多不同的任务`])
+data1$selfeff_3 <- unname(score_map[data1$`86、请选择最合适您的选项。—当面临困难的任务时，我确信我能够完成它们`])
+
+data1$self_efficacy_total <- data1$selfeff_1 + data1$selfeff_2 + data1$selfeff_3
+data1$self_efficacy_mean <- rowMeans(
+  data1[, c("selfeff_1", "selfeff_2", "selfeff_3")],
+  na.rm = FALSE
+)
+
+table(data1$self_efficacy_total, useNA = "ifany")
+summary(data1$self_efficacy_total)
+
+
+
+#### resilience
+
+
+data1$`88、经历艰难或疾病后，我往往会很快恢复` <- gsub(
+  "從來不",
+  "从来不",
+  data1$`88、经历艰难或疾病后，我往往会很快恢复`
+)
+
+data1$`88、经历艰难或疾病后，我往往会很快恢复` <- gsub(
+  "有時",
+  "有时",
+  data1$`88、经历艰难或疾病后，我往往会很快恢复`
+)
+
+data1$`88、经历艰难或疾病后，我往往会很快恢复` <- gsub(
+  "經常",
+  "经常",
+  data1$`88、经历艰难或疾病后，我往往会很快恢复`
+)
+
+data1$`88、请根据过去一个月您的情况，对下面每个阐述，选出最符合你的一项。注意回答这些问题没有对错之分。—我能适应变化` <- gsub(
+  "從來不",
+  "从来不",
+  data1$`88、请根据过去一个月您的情况，对下面每个阐述，选出最符合你的一项。注意回答这些问题没有对错之分。—我能适应变化`
+)
+
+data1$`88、请根据过去一个月您的情况，对下面每个阐述，选出最符合你的一项。注意回答这些问题没有对错之分。—我能适应变化` <- gsub(
+  "有時",
+  "有时",
+  data1$`88、请根据过去一个月您的情况，对下面每个阐述，选出最符合你的一项。注意回答这些问题没有对错之分。—我能适应变化`
+)
+
+data1$`88、请根据过去一个月您的情况，对下面每个阐述，选出最符合你的一项。注意回答这些问题没有对错之分。—我能适应变化` <- gsub(
+  "經常",
+  "经常",
+  data1$`88、请根据过去一个月您的情况，对下面每个阐述，选出最符合你的一项。注意回答这些问题没有对错之分。—我能适应变化`
+)
+
+score_map <- c(
+  "从来不" = 1,
+  "很少" = 2,
+  "有时" = 3,
+  "经常" = 4,
+  "一直如此" = 5
+)
+
+data1$resilience_1 <- unname(score_map[data1$`88、经历艰难或疾病后，我往往会很快恢复`])
+data1$resilience_2 <- unname(score_map[data1$`88、请根据过去一个月您的情况，对下面每个阐述，选出最符合你的一项。注意回答这些问题没有对错之分。—我能适应变化`])
+
+data1$resilience_total <- data1$resilience_1 + data1$resilience_2
+data1$resilience_mean <- rowMeans(
+  data1[, c("resilience_1", "resilience_2")],
+  na.rm = FALSE
+)
+
+table(data1$resilience_total, useNA = "ifany")
+summary(data1$resilience_total)
+
+#####ACE_total
+ace_vars <- c(
+  "77、在你前18年的成长过程中，父母或家里的其他成年人是否：—偶尔或经常咒骂、侮辱或贬低你？",
+  "77、偶尔或经常做出让你害怕身体受到伤害的行为?",
+  "77、偶尔或经常推、抓、挤或掌掴你？",
+  "77、偶尔或经常很重地打你以至于留下印记或伤痕？",
+  "78、在你前18年的成长过程中，是否有成年人或者至少大你5岁的人：—以性的方式触摸或抚摸你?",
+  "78、你有没有以性的方式触摸他们的身体?",
+  "78、尝试与你进行口交、肛交或阴道性交?",
+  "78、实际上与你口交，肛交或阴道性交吗?",
+  "79、在你前18年的成长过程中：—你是否和有酗酒问题的人住在一起？",
+  "79、你是否和吸毒者住一起?",
+  "79、你是否有家庭成员患有抑郁症或精神疾病?",
+  "79、你是否有家庭成员企图自杀?",
+  "79、有家庭成员入狱过吗?",
+  "80、在你前18年的成长过程中，你的母亲(或继母)是否：—偶尔或经常地被推、抓、掌掴、或被砸？",
+  "80、偶尔或经常地被踢、咬、或用拳头、硬物打？",
+  "80、曾经在几分钟内反复被打过吗?",
+  "80、曾经被刀威胁或伤害过吗?"
+)
+
+data1[ace_vars] <- lapply(data1[ace_vars], function(x) {
+  x <- as.character(x)
+  ifelse(x == "是", 1,
+         ifelse(x == "否", 0, NA))
+})
+
+parental_psychophysical_threat_vars <- c(
+  "77、在你前18年的成长过程中，父母或家里的其他成年人是否：—偶尔或经常咒骂、侮辱或贬低你？",
+  "77、偶尔或经常做出让你害怕身体受到伤害的行为?",
+  "77、偶尔或经常推、抓、挤或掌掴你？",
+  "77、偶尔或经常很重地打你以至于留下印记或伤痕？"
+)
+
+childhood_sexual_abuse_vars <- c(
+  "78、在你前18年的成长过程中，是否有成年人或者至少大你5岁的人：—以性的方式触摸或抚摸你?",
+  "78、你有没有以性的方式触摸他们的身体?",
+  "78、尝试与你进行口交、肛交或阴道性交?",
+  "78、实际上与你口交，肛交或阴道性交吗?"
+)
+
+household_dysfunction_vars <- c(
+  "79、在你前18年的成长过程中：—你是否和有酗酒问题的人住在一起？",
+  "79、你是否和吸毒者住一起?",
+  "79、你是否有家庭成员患有抑郁症或精神疾病?",
+  "79、你是否有家庭成员企图自杀?",
+  "79、有家庭成员入狱过吗?"
+)
+
+mother_exposed_to_violence_vars <- c(
+  "80、在你前18年的成长过程中，你的母亲(或继母)是否：—偶尔或经常地被推、抓、掌掴、或被砸？",
+  "80、偶尔或经常地被踢、咬、或用拳头、硬物打？",
+  "80、曾经在几分钟内反复被打过吗?",
+  "80、曾经被刀威胁或伤害过吗?"
+)
+
+make_domain <- function(df, vars) {
+  apply(df[, vars, drop = FALSE], 1, function(x) {
+    if (all(is.na(x))) {
+      NA
+    } else if (any(x == 1, na.rm = TRUE)) {
+      1
+    } else {
+      0
+    }
+  })
+}
+
+data1$parental_psychophysical_threat <- make_domain(data1, parental_psychophysical_threat_vars)
+data1$childhood_sexual_abuse <- make_domain(data1, childhood_sexual_abuse_vars)
+data1$household_dysfunction <- make_domain(data1, household_dysfunction_vars)
+data1$mother_exposed_to_violence <- make_domain(data1, mother_exposed_to_violence_vars)
+
+ace_domain_vars <- c(
+  "parental_psychophysical_threat",
+  "childhood_sexual_abuse",
+  "household_dysfunction",
+  "mother_exposed_to_violence"
+)
+
+data1$ACE_total <- apply(data1[, ace_domain_vars], 1, function(x) {
+  if (all(is.na(x))) {
+    NA
+  } else {
+    sum(x, na.rm = TRUE)
+  }
+})
+
+table(data1$parental_psychophysical_threat, useNA = "ifany")
+table(data1$childhood_sexual_abuse, useNA = "ifany")
+table(data1$household_dysfunction, useNA = "ifany")
+table(data1$mother_exposed_to_violence, useNA = "ifany")
+table(data1$ACE_total, useNA = "ifany")
+summary(data1$ACE_total)
+
+
+
+
+#### drinking and smoking
+
+data1 <- data1 %>%
+  mutate(
+    drinking = case_when(
+      str_trim(as.character(`92、您现在/过去喝酒吗?`)) %in% c(
+        "一直喝", "过去不喝，现在喝", "過去不喝，現在喝"
+      ) ~ "Yes",
+      str_trim(as.character(`92、您现在/过去喝酒吗?`)) %in% c(
+        "一直都不喝", "过去喝，现在不喝", "過去喝，現在不喝"
+      ) ~ "No",
+      TRUE ~ NA_character_
+    ),
+    drinking = factor(drinking, levels = c("No", "Yes")),
+    
+    smoking = case_when(
+      str_trim(as.character(`99、您是否有吸烟的习惯?`)) %in% c(
+        "是，两者都吸", "是，吸普通香烟", "是，吸普通香煙", "是，吸电子烟"
+      ) ~ "Yes",
+      str_trim(as.character(`99、您是否有吸烟的习惯?`)) %in% c(
+        "否", "曾经有(已戒烟)", "曾經有(已戒煙)"
+      ) ~ "No",
+      TRUE ~ NA_character_
+    ),
+    smoking = factor(smoking, levels = c("No", "Yes"))
+  )
+```
+
+
+
+
+
+
+
+
+##### PSS score calculation
+```{r}
+
+
+table(data1$`84、请回想最近一个月来，您发生下列状况的频率:—觉得自己无法控制生活中的重要事情`)
+table(data1$`84、对自己处理个人问题的能力没有自信`)
+table(data1$`84、觉得事情进展不顺利`)
+table(data1$`84、感到困难堆积如山，以致无法克服`)
+
+library(dplyr)
+library(stringr)
+
+pss_score_map <- function(x) {
+  x <- str_trim(as.character(x))
+  case_when(
+    x %in% c("从不", "従不", "從不") ~ 0,
+    x %in% c("偶尔", "偶爾") ~ 1,
+    x %in% c("有时", "有時") ~ 2,
+    x %in% c("经常", "經常") ~ 3,
+    x %in% c("总是", "總是") ~ 4,
+    TRUE ~ NA_real_
+  )
+}
+data1 <- data1 %>%
+  mutate(
+    pss1 = pss_score_map(`84、请回想最近一个月来，您发生下列状况的频率:—觉得自己无法控制生活中的重要事情`),
+    pss2 = pss_score_map(`84、对自己处理个人问题的能力没有自信`),
+    pss3 = pss_score_map(`84、觉得事情进展不顺利`),
+    pss4 = pss_score_map(`84、感到困难堆积如山，以致无法克服`),
+    pss4_total = pss1 + pss2 + pss3 + pss4
+  )
+
+exists("pss_score_map")
+```
